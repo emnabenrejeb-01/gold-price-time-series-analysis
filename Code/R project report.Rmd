@@ -1,0 +1,165 @@
+---
+title: "project"
+output: html_document
+date: "2025-03-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(TSA)
+library(forecast)
+library(tseries)
+library(ggplot2)
+library(tidyverse)
+library(fpp2)
+library(astsa)
+library(readxl)
+library(lubridate)
+Gold_Price_data_ = read_excel("C:/Users/azerty/Downloads/Gold Price data .xlsx")
+gold_data=Gold_Price_data_
+
+##Data Collection & Exploration
+# View the first few rows
+head(gold_data)#Our data is composed of 7 columns
+# Ensure Date format
+gold_data$Date=as.Date(gold_data$Date,format="%Y-%m-%d")#ensuring the date format to have a correct time indexing to convert the data to the time series to forcast the gold price
+gold_data$Date
+# Extract start year and day of the year
+start_year=year(min(gold_data$Date))
+start_day =yday(min(gold_data$Date))  
+# Convert 'Price' column to a daily time series
+gold_price=ts(gold_data$`Price`, start = c(start_year, start_day), frequency = 365)#I chose to forecast the gold close prices so i convert it to time series to have an accurate result and to detect if there is a trend or a seasonality.
+gold_price
+# Plot the time series
+autoplot(gold_price) + ggtitle("Price Over Time") + ylab("Price") + xlab("Time")#based on the plot the gold price has a downward trend and then a stability so this data seems to be non-stationary.
+plot(decompose(gold_price))#we decomposed the time series to better understand the structure of the time series:trend/seasonality and residuals.
+
+##Preprocessing & Stationarity Check
+#ACF and PACF
+acf(gold_price)#the ACF shows high autocorrelation among all lags indicating that the gold price is non-stationary with a trend.
+pacf(gold_price)#the PACF plot shows that we have an autoregressive order 1 (AR(1))
+# Check for stationarity
+adf.test(gold_price)
+kpss.test(gold_price)#We applied the adf test along with the Kpss test and we confirmed that the time series is non-stationary.
+# Apply differencing 
+diff_gold=diff(gold_price)#we applied the differencing to convert the time series to be stationary because the ARIMA models assume stationarity for accurate forecasting.
+diff_gold
+plot(diff_gold)
+adf.test(diff_gold)#the adf test after differencing prove that the data became stationary.
+#Split data into train, validate, test
+n=length(gold_price)
+n
+training.size=floor(0.8 * n)   # 80% for training to run the differrent models and for forecasting.
+validation.size=floor(0.1 * n)   # 10% for validation
+testing.size=n - training.size - validation.size  # Remaining 10% for  testing to compare the forecasted values with the actual ones using the testing and validations subsets.
+gold.training=gold_price[1:training.size]
+gold.training
+gold.validation=gold_price[(training.size + 1):(training.size + validation.size)]
+gold.validation
+gold.testing=gold_price[(training.size + validation.size + 1):n]
+gold.testing
+#differencing to the training subset
+adf.test(gold.training)
+diff_training=diff(gold.training)
+diff_training
+adf.test(diff_training)#since the training subset is non-stationary we applied the differencing and then through the adf test we checked that the subset became stationary.
+# ACF and PACF plots after differencing
+acf(diff_training, main="ACF of Differenced Training Data")#the ACF shows that most lags fall within the confidence intervalindicating stationarity.
+pacf(diff_training, main="PACF of Differenced Training Data")#the PACF shows that there is a possible AR component in the ARIMA model.
+
+##Model Implementation
+# Fit an ARIMA model
+arima_model=auto.arima(diff_training, seasonal = FALSE)
+summary(arima_model)#The model for the gold training is arima(4.0.5)
+# Fit a SARIMA model if seasonality is detected
+sarima_model=auto.arima(diff_training, seasonal = TRUE)
+summary(sarima_model)#there is no seasonality detected for this time series.
+#ets model
+ets_model=ets(diff_training)
+summary(ets_model)#the ets model shows that there is additive errors with no trend and no seasonality
+pred=ets(diff_training,model = "ZZZ")
+autoplot(forecast(pred))
+#Checking residuals
+data_residuals=residuals(arima_model)
+checkresiduals(arima_model)
+Box.test(data_residuals,lag=10,type="Ljung-Box")
+shapiro.test(data_residuals)
+plot(data_residuals)#after checking the residuals for the arima model we can conclude that they are not purely randomly distributed and also they are not normally distributed based on the shapiro test.
+
+##Model Evaluation & Comparison 
+# Compare models using AIC, BIC, RMSE, and MAPE
+accuracy(arima_model)
+accuracy(sarima_model)
+accuracy(ets_model)#after comparing the accuracy of the three models, we have the arima model performed better than the ets model.
+# Forecast the next 12 months (365 days)
+forecast_values=forecast(arima_model, h = 365)
+# Print forecast summary
+print(forecast_values)
+# Plot the forecast
+autoplot(forecast_values) +
+  ggtitle("12-Month Gold Price Forecast") +
+  xlab("Days Ahead") +
+  ylab("Gold Price")
+# Forecast for 90 days
+forecast_90=forecast(arima_model, h = 90)#i dit the forecast for one month and three months because we have a daily time series and i wanted to have more accurate and relevant results.
+# Print forecast summary
+print(forecast_90)
+# Plot 90-day forecast
+autoplot(forecast_90) +
+  ggtitle("90-Day Gold Price Forecast") +
+  xlab("Days Ahead") +
+  ylab("Gold Price")
+# Create a time series object for gold.testing
+gold_testing=ts(gold.testing, start = end(gold.training) + c(0,1), frequency = 365)#i transformed the testing subset to compare it with the forecasted values.
+gold_testing
+# Convert gold.training to a time series
+gold_training=ts(gold.training, frequency = 365) 
+# Plot actual vs. forecasted
+autoplot(gold_training) + 
+  autolayer(gold_testing, series = "Actual", color = "blue") + 
+  autolayer(forecast_values$mean, series = "Forecast", color = "red") +
+  ggtitle("Actual vs Forecasted Gold Prices") +
+  xlab("Time") + 
+  ylab("Gold Price")
+autoplot(gold_testing) + autolayer(forecast_values$mean, series="Forecast")
+autoplot(gold_testing, series = "Actual", color = "blue") +
+  autolayer(forecast_values$mean, series = "Forecast", color = "red") +
+  ggtitle("Actual vs Forecasted Gold Prices") +
+  xlab("Time") +
+  ylab("Gold Price") +
+  scale_color_manual(values = c("Actual" = "blue", "Forecast" = "red")) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.title = element_blank(),
+    legend.position = "bottom")
+# Convert gold.validate to a time series (starting after gold.training)
+gold_validate=ts(gold.validation, start = end(gold_training) + c(0,1), frequency = 365)#aso i used the validation subset to compare it with the forecasted values to have a better results and to validate them.
+# Plot actual vs forecasted values for validation set
+autoplot(gold_training) + 
+  autolayer(gold_validate, series = "Actual (Validation)", color = "blue") + 
+  autolayer(forecast_values$mean, series = "Forecast (Validation)", color = "red") +
+  ggtitle("Validation: Actual vs Forecasted Gold Prices") +
+  xlab("Time") + 
+  ylab("Gold Price")
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
